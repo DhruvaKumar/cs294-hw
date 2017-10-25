@@ -5,9 +5,11 @@ channels:
 dependencies:
     - python==3.5.2
     - numpy
+    - scipy
     - matplotlib
     - jupyter
     - pandas
+    - seaborn
     - pip:
         - gym
         - tensorflow

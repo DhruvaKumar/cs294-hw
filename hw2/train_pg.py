@@ -90,9 +90,11 @@ def train_PG(exp_name='',
     
     # Is this env continuous, or discrete?
     discrete = isinstance(env.action_space, gym.spaces.Discrete)
+    print("discrete env: ", discrete)
 
     # Maximum length for episodes
     max_path_length = max_path_length or env.spec.max_episode_steps
+    print("max path length: ", max_path_length)
 
     #========================================================================================#
     # Notes on notation:
@@ -174,15 +176,16 @@ def train_PG(exp_name='',
     if discrete:
         scope="layer"
         sy_logits_na = build_mlp(sy_ob_no, ac_dim, scope) # forward pass through network to get logits
-        sy_sampled_ac = tf.multinomial(sy_logits_na, ac_dim) # sample actions from policy
-        sy_logprob_n = tf.nn.softmax_cross_entropy_with_logits(labels=sy_sampled_ac, logits=sy_logits_na)
+        sy_sampled_ac = tf.reshape(tf.multinomial(sy_logits_na, 1), [-1]) # sample actions from policy (flatten tensor)
+        sy_logprob_n = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=sy_ac_na, logits=sy_logits_na)
 
     else:
         # # YOUR_CODE_HERE
         # sy_mean = TODO
         # sy_logstd = TODO # logstd should just be a trainable variable, not a network output.
         # sy_sampled_ac = TODO
-        # sy_logprob_n = TODO  # Hint: Use the log probability under a multivariate gaussian. 
+        # sy_logprob_n = TODO  # Hint: Use the log probability under a multivariate gaussian.
+        sy_mean=1
 
 
 
@@ -210,7 +213,7 @@ def train_PG(exp_name='',
         # Define placeholders for targets, a loss function and an update op for fitting a 
         # neural network baseline. These will be used to fit the neural network baseline. 
         # YOUR_CODE_HERE
-        baseline_update_op = TODO
+        # baseline_update_op = TODO
 
 
     #========================================================================================#
@@ -270,6 +273,8 @@ def train_PG(exp_name='',
         ac_na = np.concatenate([path["action"] for path in paths])
         rew_n = np.concatenate([path["reward"] for path in paths])
 
+        # print("obshape: ", ob_no.shape, "acshape: ", ac_na.shape, "rewshape", rew_n.shape)
+        # print(ac_na)
         #====================================================================================#
         #                           ----------SECTION 4----------
         # Computing Q-values
@@ -325,13 +330,19 @@ def train_PG(exp_name='',
 
         # compute total discounted reward
         if not reward_to_go:
-            t = np.arange(rew_n.size)
-            q = np.sum(np.power(gamma, t) * rew_n)
+            t_n= np.arange(rew_n.size)
+            q = np.sum(np.power(gamma, t_n) * rew_n)
             q_n = np.repeat(q, rew_n.size)
 
         # compute discounted sum of rewards starting from step t
         else:
-            q_n
+            T = rew_n.size
+            q_n = np.zeros(T)
+            t_n = np.arange(T)
+            discount_n = np.power(gamma, t_n)
+            for t in range(T):
+                q_n[t] = np.sum(t_n[:(T-t)] * rew_n[t:])
+
 
 
         #====================================================================================#
@@ -347,9 +358,10 @@ def train_PG(exp_name='',
             # Hint #bl1: rescale the output from the nn_baseline to match the statistics
             # (mean and std) of the current or previous batch of Q-values. (Goes with Hint
             # #bl2 below.)
-
-            b_n = TODO
-            adv_n = q_n - b_n
+            
+            # TODO
+            b_n = 1
+            # adv_n = q_n - b_n
         else:
             adv_n = q_n.copy()
 
@@ -361,8 +373,7 @@ def train_PG(exp_name='',
         if normalize_advantages:
             # On the next line, implement a trick which is known empirically to reduce variance
             # in policy gradient methods: normalize adv_n to have mean zero and std=1. 
-            # YOUR_CODE_HERE
-            pass
+            adv_n = (adv_n - np.mean(adv_n)) / np.std(adv_n)
 
 
         #====================================================================================#
@@ -394,14 +405,22 @@ def train_PG(exp_name='',
         # For debug purposes, you may wish to save the value of the loss function before
         # and after an update, and then log them below. 
 
-        # YOUR_CODE_HERE
+        feed_dict = {sy_ob_no: ob_no, sy_ac_na: ac_na, sy_adv_n: adv_n}
+        loss_before = sess.run(loss, feed_dict=feed_dict)
+        print("loss before: ", loss_before)
 
+        sess.run(update_op, feed_dict=feed_dict)
+
+        loss_after = sess.run(loss, feed_dict=feed_dict)
+        print("loss after: ", loss_after)
 
         # Log diagnostics
         returns = [path["reward"].sum() for path in paths]
         ep_lengths = [pathlength(path) for path in paths]
         logz.log_tabular("Time", time.time() - start)
         logz.log_tabular("Iteration", itr)
+        logz.log_tabular("LossBefore", loss_before)
+        logz.log_tabular("LossAfter", loss_after)
         logz.log_tabular("AverageReturn", np.mean(returns))
         logz.log_tabular("StdReturn", np.std(returns))
         logz.log_tabular("MaxReturn", np.max(returns))

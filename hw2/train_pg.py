@@ -37,8 +37,13 @@ def build_mlp(
     for layer in range(n_layers):
         with tf.variable_scope(scope+str(layer)):
             output = tf.layers.dense(output, units=size, activation=activation)
+            tf.summary.histogram(scope+str(layer), output)
 
-    logits = tf.layers.dense(output, units=output_size, activation=output_activation)
+    with tf.name_scope("logits"):
+        logits = tf.layers.dense(output, units=output_size, activation=output_activation, name="logits")
+        tf.summary.histogram("logits", logits)
+    # debug
+    print(tf.global_variables())
 
     return logits
        
@@ -174,10 +179,14 @@ def train_PG(exp_name='',
     #========================================================================================#
 
     if discrete:
-        scope="layer"
-        sy_logits_na = build_mlp(sy_ob_no, ac_dim, scope) # forward pass through network to get logits
-        sy_sampled_ac = tf.reshape(tf.multinomial(sy_logits_na, 1), [-1]) # sample actions from policy (flatten tensor)
-        sy_logprob_n = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=sy_ac_na, logits=sy_logits_na)
+        sy_logits_na = build_mlp(sy_ob_no, ac_dim, "layer") # forward pass through network to get logits
+        sy_sampled_ac = tf.reshape(tf.multinomial(sy_logits_na, 1), [-1], name="sy_sampled_ac") # sample actions from policy (flatten tensor)
+        with tf.name_scope("sy_logprob_n"):
+            sy_logprob_n = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=sy_ac_na, logits=sy_logits_na)
+
+        tf.summary.histogram("sy_ob_no", sy_ob_no)
+        tf.summary.histogram("sy_sampled_ac", sy_sampled_ac)
+        tf.summary.histogram("sy_logprob_n", sy_logprob_n)
 
     else:
         # # YOUR_CODE_HERE
@@ -193,9 +202,15 @@ def train_PG(exp_name='',
     #                           ----------SECTION 4----------
     # Loss Function and Training Operation
     #========================================================================================#
-    weighted_logprob_n = tf.multiply(sy_logprob_n, sy_adv_n)
-    loss = tf.reduce_mean(weighted_logprob_n) # Loss function that we'll differentiate to get the policy gradient.
-    update_op = tf.train.AdamOptimizer(learning_rate).minimize(loss)
+    with tf.name_scope("weighted_logprob_n"):
+        weighted_logprob_n = tf.multiply(sy_logprob_n, sy_adv_n)
+        tf.summary.histogram("weighted_logprob_n", weighted_logprob_n)
+        tf.summary.histogram("sy_adv_n", sy_adv_n)
+    with tf.name_scope("loss"):
+        loss = tf.reduce_mean(weighted_logprob_n) # Loss function that we'll differentiate to get the policy gradient.
+        tf.summary.scalar("loss", loss)
+    with tf.name_scope("train"):
+        update_op = tf.train.AdamOptimizer(learning_rate).minimize(loss)
 
 
     #========================================================================================#
@@ -226,6 +241,9 @@ def train_PG(exp_name='',
     sess.__enter__() # equivalent to `with sess:`
     tf.global_variables_initializer().run() #pylint: disable=E1101
 
+    merged_summary = tf.summary.merge_all()
+    writer = tf.summary.FileWriter("tflogs/")
+    writer.add_graph(sess.graph)
 
 
     #========================================================================================#
@@ -330,18 +348,20 @@ def train_PG(exp_name='',
 
         # compute total discounted reward
         if not reward_to_go:
+            print("trajectory-based PG reward_to_go=false")
             t_n= np.arange(rew_n.size)
             q = np.sum(np.power(gamma, t_n) * rew_n)
             q_n = np.repeat(q, rew_n.size)
 
         # compute discounted sum of rewards starting from step t
         else:
+            print("reward_to_go PG")
             T = rew_n.size
             q_n = np.zeros(T)
             t_n = np.arange(T)
             discount_n = np.power(gamma, t_n)
             for t in range(T):
-                q_n[t] = np.sum(t_n[:(T-t)] * rew_n[t:])
+                q_n[t] = np.sum(discount_n[:(T-t)] * rew_n[t:])
 
 
 
@@ -409,7 +429,9 @@ def train_PG(exp_name='',
         loss_before = sess.run(loss, feed_dict=feed_dict)
         print("loss before: ", loss_before)
 
-        sess.run(update_op, feed_dict=feed_dict)
+        summary, _ = sess.run([merged_summary, update_op], feed_dict=feed_dict)
+
+        writer.add_summary(summary, itr)
 
         loss_after = sess.run(loss, feed_dict=feed_dict)
         print("loss after: ", loss_after)

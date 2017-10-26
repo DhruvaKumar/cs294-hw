@@ -347,23 +347,30 @@ def train_PG(exp_name='',
         #====================================================================================#
 
         # compute total discounted reward
+        q_n = []
         if not reward_to_go:
             print("trajectory-based PG reward_to_go=false")
-            t_n= np.arange(rew_n.size)
-            q = np.sum(np.power(gamma, t_n) * rew_n)
-            q_n = np.repeat(q, rew_n.size)
+            for path in paths:
+                r_T = path["reward"]
+                T = r_T.size
+                t_T= np.arange(T)
+                q = np.sum(np.power(gamma, t_T) * r_T)
+                q_n.extend(np.repeat(q, T))
 
         # compute discounted sum of rewards starting from step t
         else:
             print("reward_to_go PG")
-            T = rew_n.size
-            q_n = np.zeros(T)
-            t_n = np.arange(T)
-            discount_n = np.power(gamma, t_n)
-            for t in range(T):
-                q_n[t] = np.sum(discount_n[:(T-t)] * rew_n[t:])
+            for path in paths:
+                r_T = path["reward"]
+                T = r_T.size
+                t_T= np.arange(T)
+                discount_T = np.power(gamma, t_T)
+                for t in range(T):
+                    q = np.sum(discount_T[:(T-t)] * r_T[t:])
+                    q_n.append(q)
 
-
+        q_n = np.array(q_n)
+        assert(q_n.size == rew_n.size)
 
         #====================================================================================#
         #                           ----------SECTION 5----------
